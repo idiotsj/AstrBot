@@ -1,4 +1,5 @@
 import base64
+import binascii
 import logging
 import os
 import shutil
@@ -8,6 +9,8 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
+from urllib.request import url2pathname
 
 import aiohttp
 import certifi
@@ -204,6 +207,86 @@ def file_to_base64(file_path: str) -> str:
         data_bytes = f.read()
         base64_str = base64.b64encode(data_bytes).decode()
     return "base64://" + base64_str
+
+
+DEFAULT_IMAGE_MIME_TYPE = "image/jpeg"
+
+
+def is_http_or_https_url(source: str) -> bool:
+    """Return whether source is a HTTP(S) URL (case-insensitive)."""
+    return urlsplit(source).scheme.lower() in ("http", "https")
+
+
+def detect_image_mime_type(data: bytes) -> str:
+    """根据图片二进制数据的 magic bytes 检测 MIME 类型。"""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:2] == b"\xff\xd8":
+        return DEFAULT_IMAGE_MIME_TYPE
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return DEFAULT_IMAGE_MIME_TYPE
+
+
+def image_source_to_data_uri(image_source: str) -> tuple[str, str]:
+    """将本地/内联图片来源统一转换为 data URI，并尽量保留真实 MIME 类型。
+
+    说明:
+    - 支持 `data:image/...`、`base64://...`、本地路径和 `file://...`。
+    - 不支持远程 URL（`http://`、`https://`），调用方应先下载到本地文件。
+    """
+    lower_source = image_source.lower()
+
+    if lower_source.startswith("data:"):
+        prefix = image_source.split(",", 1)[0]
+        mime_type = prefix.split(";", 1)[0].removeprefix("data:").lower()
+        if not mime_type.startswith("image/"):
+            raise ValueError(
+                f"Only image data URI is supported, got MIME type: {mime_type or 'unknown'}",
+            )
+        return image_source, mime_type
+
+    if is_http_or_https_url(image_source):
+        raise ValueError(
+            "Remote image URL is not supported in image_source_to_data_uri; download the file before calling this helper.",
+        )
+
+    if lower_source.startswith("base64://"):
+        raw_base64 = image_source[len("base64://") :]
+        mime_type = DEFAULT_IMAGE_MIME_TYPE
+        try:
+            image_bytes = base64.b64decode(raw_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            logger.debug(
+                "Failed to decode base64 image source, fallback to %s: %s",
+                DEFAULT_IMAGE_MIME_TYPE,
+                exc,
+            )
+            return f"data:{mime_type};base64,{raw_base64}", mime_type
+
+        mime_type = detect_image_mime_type(image_bytes)
+        return f"data:{mime_type};base64,{raw_base64}", mime_type
+
+    if lower_source.startswith("file://"):
+        parsed = urlsplit(image_source)
+        if parsed.netloc and parsed.netloc != "localhost":
+            raw_path = f"//{parsed.netloc}{parsed.path}"
+        else:
+            raw_path = parsed.path
+        image_source = url2pathname(unquote(raw_path))
+    elif "://" in image_source:
+        scheme = image_source.split("://", 1)[0].lower()
+        raise ValueError(
+            f"Unsupported image source scheme: {scheme}://",
+        )
+
+    with open(image_source, "rb") as f:
+        image_bytes = f.read()
+    mime_type = detect_image_mime_type(image_bytes)
+    image_bs64 = base64.b64encode(image_bytes).decode("utf-8")
+    return f"data:{mime_type};base64,{image_bs64}", mime_type
 
 
 def get_local_ip_addresses():

@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import inspect
 import json
 import random
@@ -22,7 +21,11 @@ from astrbot.core.agent.message import ContentPart, ImageURLPart, Message, TextP
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.provider.entities import LLMResponse, TokenUsage, ToolCallsResult
-from astrbot.core.utils.io import download_image_by_url
+from astrbot.core.utils.io import (
+    download_image_by_url,
+    image_source_to_data_uri,
+    is_http_or_https_url,
+)
 from astrbot.core.utils.network_utils import (
     create_proxy_client,
     is_connection_error,
@@ -924,17 +927,12 @@ class ProviderOpenAIOfficial(Provider):
         """组装成符合 OpenAI 格式的 role 为 user 的消息段"""
 
         async def resolve_image_part(image_url: str) -> dict | None:
-            if image_url.startswith("http"):
-                image_path = await download_image_by_url(image_url)
-                image_data = await self.encode_image_bs64(image_path)
-            elif image_url.startswith("file:///"):
-                image_path = image_url.replace("file:///", "")
-                image_data = await self.encode_image_bs64(image_path)
-            else:
-                image_data = await self.encode_image_bs64(image_url)
-            if not image_data:
-                logger.warning(f"图片 {image_url} 得到的结果为空，将忽略。")
-                return None
+            image_source = (
+                await download_image_by_url(image_url)
+                if is_http_or_https_url(image_url)
+                else image_url
+            )
+            image_data = await self.encode_image_bs64(image_source)
             return {
                 "type": "image_url",
                 "image_url": {"url": image_data},
@@ -987,11 +985,8 @@ class ProviderOpenAIOfficial(Provider):
 
     async def encode_image_bs64(self, image_url: str) -> str:
         """将图片转换为 base64"""
-        if image_url.startswith("base64://"):
-            return image_url.replace("base64://", "data:image/jpeg;base64,")
-        with open(image_url, "rb") as f:
-            image_bs64 = base64.b64encode(f.read()).decode("utf-8")
-            return "data:image/jpeg;base64," + image_bs64
+        data_uri, _ = image_source_to_data_uri(image_url)
+        return data_uri
 
     async def terminate(self):
         if self.client:

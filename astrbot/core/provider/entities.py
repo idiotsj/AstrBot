@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import enum
 import json
 from dataclasses import dataclass, field
@@ -11,7 +10,6 @@ from google.genai.types import GenerateContentResponse
 from openai.types.chat.chat_completion import ChatCompletion
 
 import astrbot.core.message.components as Comp
-from astrbot import logger
 from astrbot.core.agent.message import (
     AssistantMessageSegment,
     ContentPart,
@@ -21,7 +19,11 @@ from astrbot.core.agent.message import (
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.db.po import Conversation
 from astrbot.core.message.message_event_result import MessageChain
-from astrbot.core.utils.io import download_image_by_url
+from astrbot.core.utils.io import (
+    download_image_by_url,
+    image_source_to_data_uri,
+    is_http_or_https_url,
+)
 
 
 class ProviderType(enum.Enum):
@@ -187,17 +189,12 @@ class ProviderRequest:
         # 3. 图片内容
         if self.image_urls:
             for image_url in self.image_urls:
-                if image_url.startswith("http"):
-                    image_path = await download_image_by_url(image_url)
-                    image_data = await self._encode_image_bs64(image_path)
-                elif image_url.startswith("file:///"):
-                    image_path = image_url.replace("file:///", "")
-                    image_data = await self._encode_image_bs64(image_path)
-                else:
-                    image_data = await self._encode_image_bs64(image_url)
-                if not image_data:
-                    logger.warning(f"图片 {image_url} 得到的结果为空，将忽略。")
-                    continue
+                image_source = (
+                    await download_image_by_url(image_url)
+                    if is_http_or_https_url(image_url)
+                    else image_url
+                )
+                image_data = await self._encode_image_bs64(image_source)
                 content_blocks.append(
                     {"type": "image_url", "image_url": {"url": image_data}},
                 )
@@ -216,12 +213,8 @@ class ProviderRequest:
 
     async def _encode_image_bs64(self, image_url: str) -> str:
         """将图片转换为 base64"""
-        if image_url.startswith("base64://"):
-            return image_url.replace("base64://", "data:image/jpeg;base64,")
-        with open(image_url, "rb") as f:
-            image_bs64 = base64.b64encode(f.read()).decode("utf-8")
-            return "data:image/jpeg;base64," + image_bs64
-        return ""
+        data_uri, _ = image_source_to_data_uri(image_url)
+        return data_uri
 
 
 @dataclass

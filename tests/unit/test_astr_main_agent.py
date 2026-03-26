@@ -14,6 +14,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.platform_metadata import PlatformMetadata
 from astrbot.core.provider import Provider
 from astrbot.core.provider.entities import ProviderRequest
+from tests.fixtures.image_samples import PNG_BASE64, PNG_BYTES, WEBP_BYTES
 
 
 @pytest.fixture
@@ -719,6 +720,71 @@ class TestModalitiesFix:
         assert req.prompt == "Hello"
         assert len(req.image_urls) == 1
         assert req.func_tool is not None
+
+
+class TestProviderRequestAssembleContextImage:
+    @pytest.mark.asyncio
+    async def test_provider_request_assemble_context_image_mime_local_and_file_uri(
+        self, tmp_path
+    ):
+        png_path = tmp_path / "request.png"
+        webp_path = tmp_path / "request.webp"
+        png_path.write_bytes(PNG_BYTES)
+        webp_path.write_bytes(WEBP_BYTES)
+        base64_url = f"base64://{PNG_BASE64}"
+
+        req = ProviderRequest(
+            prompt="Hello",
+            image_urls=[
+                str(png_path),
+                f"file:///{webp_path.as_posix()}",
+                base64_url,
+            ],
+        )
+
+        assembled = await req.assemble_context()
+        assert isinstance(assembled["content"], list)
+
+        image_urls = [
+            part["image_url"]["url"]
+            for part in assembled["content"]
+            if part.get("type") == "image_url"
+        ]
+        assert len(image_urls) == 3
+        assert image_urls[0].startswith("data:image/png;base64,")
+        assert image_urls[1].startswith("data:image/webp;base64,")
+        assert image_urls[2].startswith("data:image/png;base64,")
+
+    @pytest.mark.asyncio
+    async def test_provider_request_assemble_context_uppercase_https_image_url(
+        self, tmp_path, monkeypatch
+    ):
+        png_path = tmp_path / "request-upper.png"
+        png_path.write_bytes(PNG_BYTES)
+
+        async def fake_download(url: str) -> str:
+            assert url == "HTTPS://example.com/request.png"
+            return str(png_path)
+
+        monkeypatch.setattr(
+            "astrbot.core.provider.entities.download_image_by_url",
+            fake_download,
+        )
+
+        req = ProviderRequest(
+            prompt="Hello",
+            image_urls=["HTTPS://example.com/request.png"],
+        )
+
+        assembled = await req.assemble_context()
+        assert isinstance(assembled["content"], list)
+        image_urls = [
+            part["image_url"]["url"]
+            for part in assembled["content"]
+            if part.get("type") == "image_url"
+        ]
+        assert len(image_urls) == 1
+        assert image_urls[0].startswith("data:image/png;base64,")
 
 
 class TestSanitizeContextByModalities:
