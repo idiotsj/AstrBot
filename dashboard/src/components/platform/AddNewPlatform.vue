@@ -260,7 +260,8 @@
         <p>{{ tm('dialog.securityWarning.aiocqhttpTokenMissing') }}</p>
         <span><a
             href="https://docs.astrbot.app/platform/aiocqhttp.html"
-            target="_blank">{{ tm('dialog.securityWarning.learnMore') }}</a></span>
+            target="_blank"
+            rel="noopener noreferrer">{{ tm('dialog.securityWarning.learnMore') }}</a></span>
       </v-card-text>
       <v-card-actions class="px-4 pb-4">
         <v-spacer></v-spacer>
