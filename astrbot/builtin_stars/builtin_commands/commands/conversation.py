@@ -6,6 +6,7 @@ from astrbot.core.agent.runners.deerflow.constants import (
     DEERFLOW_PROVIDER_TYPE,
     DEERFLOW_THREAD_ID_KEY,
 )
+from astrbot.core.constants import PERSONA_NONE_MARKER
 from astrbot.core.platform.astr_message_event import MessageSession
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.utils.active_event_registry import active_event_registry
@@ -24,20 +25,6 @@ THIRD_PARTY_AGENT_RUNNER_STR = ", ".join(THIRD_PARTY_AGENT_RUNNER_KEY.keys())
 class ConversationCommands:
     def __init__(self, context: star.Context) -> None:
         self.context = context
-
-    async def _get_current_persona_id(self, session_id):
-        curr = await self.context.conversation_manager.get_curr_conversation_id(
-            session_id,
-        )
-        if not curr:
-            return None
-        conv = await self.context.conversation_manager.get_conversation(
-            session_id,
-            curr,
-        )
-        if not conv:
-            return None
-        return conv.persona_id
 
     async def reset(self, message: AstrMessageEvent) -> None:
         """重置 LLM 会话"""
@@ -225,7 +212,7 @@ class ConversationCommands:
                 platform_name=platform_name,
                 provider_settings=provider_settings,
             )
-            if persona_id == "[%None]":
+            if persona_id == PERSONA_NONE_MARKER:
                 persona_name = "无"
             elif persona_id:
                 persona_name = persona_id
@@ -281,11 +268,9 @@ class ConversationCommands:
             return
 
         active_event_registry.stop_all(message.unified_msg_origin, exclude=message)
-        cpersona = await self._get_current_persona_id(message.unified_msg_origin)
         cid = await self.context.conversation_manager.new_conversation(
             message.unified_msg_origin,
             message.get_platform_id(),
-            persona_id=cpersona,
         )
 
         message.set_extra("_clean_ltm_session", True)
@@ -305,11 +290,9 @@ class ConversationCommands:
                 ),
             )
 
-            cpersona = await self._get_current_persona_id(session)
             cid = await self.context.conversation_manager.new_conversation(
                 session,
                 message.get_platform_id(),
-                persona_id=cpersona,
             )
             message.set_result(
                 MessageEventResult().message(

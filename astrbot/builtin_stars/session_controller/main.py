@@ -63,7 +63,7 @@ class Main(Star):
                                     curr_cid,
                                 )
                             else:
-                                # 创建新对话
+                                # 创建新对话（persona 继承逻辑在 new_conversation 内部处理）
                                 curr_cid = await self.context.conversation_manager.new_conversation(
                                     event.unified_msg_origin,
                                     platform_id=event.get_platform_id(),

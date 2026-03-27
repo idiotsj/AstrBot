@@ -29,6 +29,7 @@ class SessionStatusCheckStage(Stage):
                 event.unified_msg_origin,
             )
             if not conv_id:
+                # new_conversation 内部会自动处理 persona 继承
                 await self.conv_mgr.new_conversation(
                     event.unified_msg_origin,
                     platform_id=event.get_platform_id(),

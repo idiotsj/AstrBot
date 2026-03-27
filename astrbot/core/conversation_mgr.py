@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 
 from astrbot.core import sp
 from astrbot.core.agent.message import AssistantMessageSegment, UserMessageSegment
+from astrbot.core.constants import PERSONA_NONE_MARKER
 from astrbot.core.db import BaseDatabase
 from astrbot.core.db.po import Conversation, ConversationV2
 from astrbot.core.utils.datetime_utils import to_utc_timestamp
@@ -87,6 +88,10 @@ class ConversationManager:
 
         Args:
             unified_msg_origin (str): 统一的消息来源字符串。格式为 platform_name:message_type:session_id
+            platform_id (str | None): 平台 ID，可选
+            content (list[dict] | None): 对话内容，可选
+            title (str | None): 对话标题，可选
+            persona_id (str | None): 人格 ID。如果未提供，将自动从当前对话继承（如果存在且非 [%None]）
         Returns:
             conversation_id (str): 对话 ID, 是 uuid 格式的字符串
 
@@ -98,6 +103,11 @@ class ConversationManager:
                 platform_id = parts[0]
         if not platform_id:
             platform_id = "unknown"
+
+        # 如果未提供 persona_id，自动从当前对话继承
+        if persona_id is None:
+            persona_id = await self.get_curr_persona_id(unified_msg_origin)
+
         conv = await self.db.create_conversation(
             user_id=unified_msg_origin,
             platform_id=platform_id,
@@ -173,6 +183,58 @@ class ConversationManager:
                 self.session_conversations[unified_msg_origin] = ret
         return ret
 
+    async def get_or_create_curr_conversation(
+        self,
+        unified_msg_origin: str,
+        platform_id: str | None = None,
+    ) -> Conversation:
+        """获取或创建会话当前的对话。
+
+        如果当前会话有对话ID，尝试获取该对话；如果不存在或没有对话ID，则创建新对话。
+        新对话会自动继承当前对话的 persona_id（如果存在且非 [%None]）。
+
+        Args:
+            unified_msg_origin (str): 统一的消息来源字符串。格式为 platform_name:message_type:session_id
+            platform_id (str | None): 平台 ID，可选。创建新对话时使用
+
+        Returns:
+            conversation (Conversation): 对话对象
+
+        Raises:
+            RuntimeError: 如果创建新对话后仍无法获取
+
+        """
+        cid = await self.get_curr_conversation_id(unified_msg_origin)
+
+        if cid:
+            conversation = await self.get_conversation(unified_msg_origin, cid)
+            if conversation:
+                return conversation
+
+        # 创建新对话（persona_id 继承逻辑在 new_conversation 内部处理）
+        cid = await self.new_conversation(unified_msg_origin, platform_id)
+        conversation = await self.get_conversation(unified_msg_origin, cid)
+
+        if not conversation:
+            raise RuntimeError("无法创建新的对话。")
+        return conversation
+
+    async def get_curr_persona_id(self, unified_msg_origin: str) -> str | None:
+        """获取当前对话的persona_id，用于创建新对话时继承。
+
+        Args:
+            unified_msg_origin: 统一的消息来源字符串
+
+        Returns:
+            当前对话的persona_id，如果没有或为PERSONA_NONE_MARKER则返回None
+        """
+        curr_cid = await self.get_curr_conversation_id(unified_msg_origin)
+        if curr_cid:
+            conv = await self.db.get_conversation_by_id(cid=curr_cid)
+            if conv and conv.persona_id and conv.persona_id != PERSONA_NONE_MARKER:
+                return conv.persona_id
+        return None
+
     async def get_conversation(
         self,
         unified_msg_origin: str,
@@ -192,7 +254,10 @@ class ConversationManager:
         conv = await self.db.get_conversation_by_id(cid=conversation_id)
         if not conv and create_if_not_exists:
             # 如果对话不存在且需要创建，则新建一个对话
-            conversation_id = await self.new_conversation(unified_msg_origin)
+            persona_id = await self.get_curr_persona_id(unified_msg_origin)
+            conversation_id = await self.new_conversation(
+                unified_msg_origin, persona_id=persona_id
+            )
             conv = await self.db.get_conversation_by_id(cid=conversation_id)
         conv_res = None
         if conv:
